@@ -1,1 +1,1 @@
-# qnguyen-math-thesis-tamucc
+# qnguyen-thesis-tamucc
