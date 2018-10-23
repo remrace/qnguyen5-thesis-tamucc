@@ -10,7 +10,7 @@ from keras.models import *
 from keras.layers import *
 from keras.optimizers import *
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler
-from keras import backend as keras
+from keras import backend as K
 INPUT_SIZE = (480, 320, 3)
 
 def rand_loss_function(y_true, y_pred):
@@ -23,9 +23,6 @@ def rand_loss_function(y_true, y_pred):
     kernels = np.transpose(np.asarray(kernels), (1, 2, 0))
     kernels = np.expand_dims(kernels, -2)
     kernels_tf = tf.constant(kernels, dtype=y_pred.dtype)
-
-    affs = tf.abs(tf.nn.depthwise_conv2d(input=y_pred, filter=kernels_tf, strides=[1, 1, 1, 1], padding='SAME'))
-    affs = tf.subtract(1.0, tf.multiply(2.0, affs))
 
     gt_edges = tf.clip_by_value(tf.abs(tf.nn.depthwise_conv2d(input=y_true, filter=kernels_tf, strides=[1, 1, 1, 1], padding='SAME')), clip_value_min=0.0, clip_value_max=1.0)
     gt_edges = tf.subtract(1.0, tf.multiply(2.0, gt_edges))
@@ -82,7 +79,7 @@ def rand_loss_function(y_true, y_pred):
 
         return WY
 
-    #WY = tf.py_func(GetRandWeights, [y_true, y_pred], [tf.float32]) 
+    WY = tf.py_func(GetRandWeights, [y_true, y_pred], [tf.float32]) 
     
     #newY = tf.multiply(SY, gt_edges)
 
@@ -92,10 +89,79 @@ def rand_loss_function(y_true, y_pred):
 
     return tf.reduce_sum(weightedLoss) 
 
+def weighted_rand_loss(input_nlabels=None):
+    if input_nlabels == None:
+        print('error in loss function')
+        return
+    
+    #nlabels is expected to have shape (480, 320, 1)
+    def rand_loss(y_true, y_pred):
+        def GetRandWeights(nlabels):
+            G = nx.grid_2d_graph(INPUT_SIZE[0], INPUT_SIZE[1])
+            #nlabels = K.eval(input_nlabels)
+            nlabels_dict = dict()
+            for u, v, d in G.edges(data = True):
+                if u[0] == v[0]:
+                    channel = 0
+                else:
+                    channel = 1
+                d['weight'] =  y_pred[0, u[0], u[1], channel]
+                nlabels_dict[u] = (int) nlabels[0, u[0], u[1], 0]
+                nlabels_dict[v] = (int) nlabels[0, v[0], v[1], 0]
 
-def unet(pretrained_weights=None, input_size=INPUT_SIZE, model_type=None):
-    inputs = Input(input_size)
-    conv1 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(inputs)
+            [posCounts, negCounts, mstEdges, totalPos, totalNeg] = ev.FindRandCounts(G, nlabels_dict)
+            
+            # for class imbalance
+            posWeight = 0.0
+            negWeight = 0.0
+            # start off with every point in own cluster
+            posError = totalPos
+            negError = 0.0
+
+            WY = np.zeros((1, 480, 320, 2), np.float32)
+            #SY = np.ones((1, 480, 320, 2), np.float32)
+            for i in range(len(posCounts)):
+                posError = posError - posCounts[i]
+                negError = negError + negCounts[i]
+
+                WS = posError - negError
+            
+                (u,v) = mstEdges[i]
+
+                if u[0] == v[0]: #vertical, dy, channel 0
+                    channel = 0
+                else: #horizontal, dx, channel 1
+                    channel = 1
+                
+                if WS > 0.0:
+                    WY[0, u[0], u[1], channel] = abs(WS) + posWeight
+                    #if nlabels[u] != nlabels[v]:
+                        #SY[0, u[0], u[1], channel] = -1.0
+                if WS < 0.0: 
+                    WY[0, u[0], u[1], channel] = abs(WS) + negWeight
+                    #if nlabels[u] == nlabels[v]:
+                        #SY[0, u[0], u[1], channel] = -1.0
+            
+            # Std normalization
+            totalW = np.sum(WY)
+            if totalW > 0.0:
+                WY = WY / totalW
+
+            return WY
+        
+        WY = tf.py_func(GetRandWeights, [input_nlabels], [tf.float32])
+
+        edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(y_pred, y_true)))
+
+        weightedLoss = tf.multiply(WY, edgeLoss)
+
+        return tf.reduce_sum(weightedLoss)
+    return rand_loss       
+
+def unet(pretrained_weights=None):
+    input_image = Input(shape=(480, 320, 3), name='images')
+    input_nlabels = Input(shape=(480, 320, 1), name='nlabels')
+    conv1 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(input_image)
     conv1 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv1)
     pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
     conv2 = Conv2D(128, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(pool1)
@@ -133,14 +199,10 @@ def unet(pretrained_weights=None, input_size=INPUT_SIZE, model_type=None):
     conv9 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(merge9)
     conv9 = Conv2D(64, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv9)
     conv9 = Conv2D(2, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv9)
-    conv10 = Conv2D(1, 1, activation = 'sigmoid')(conv9)
-    conv10_edge = Conv2D(2, 1, activation = 'sigmoid')(conv9)
-    if model_type == "edge":
-        model = Model(input = inputs, output = conv10_edge)
-        model.compile(optimizer = Adam(lr = 1e-4), loss = rand_loss_function)
-    else:
-        model = Model(input = inputs, output = conv10)
-        model.compile(optimizer = Adam(lr = 1e-4), loss = rand_loss_function)
+    conv10 = Conv2D(2, 1, activation = 'tanh')(conv9)
+  
+    model = Model(input=[input_image, input_nlabels], output = conv10)
+    model.compile(optimizer = Adam(lr = 1e-4), loss = [weighted_rand_loss(input_nlabels)])
 
     
 

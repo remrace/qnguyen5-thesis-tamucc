@@ -2,13 +2,15 @@ import os
 import numpy as np
 import tensorflow as tf
 import tensorflow.keras.preprocessing.image as TFimage
+import networkx as nx
+import pickle
 from scipy.io import loadmat
-TRAIN_GT_DIR = '../data/BSDS500/data/groundTruth/train/'
-TRAIN_IMG_DIR = '../data/BSDS500/data/images/train/'
-TEST_GT_DIR = '../data/BSDS500/data/groundTruth/test/'
-TEST_IMG_DIR = '../data/BSDS500/data/images/test/'
-VAL_GT_DIR = '../data/BSDS500/data/groundTruth/val/'
-VAL_IMG_DIR = '../data/BSDS500/data/images/val/'
+TRAIN_GT_DIR = 'C:/data/BSDS500/data/groundTruth/train/'
+TRAIN_IMG_DIR = 'C:/data/BSDS500/data/images/train/'
+TEST_GT_DIR = 'C:/data/BSDS500/data/groundTruth/test/'
+TEST_IMG_DIR = 'C:/data/BSDS500/data/images/test/'
+VAL_GT_DIR = 'C:/data/BSDS500/data/groundTruth/val/'
+VAL_IMG_DIR = 'C:/data/BSDS500/data/images/val/'
 
 GT_EXT = '.mat'
 IMG_EXT = '.jpg'
@@ -45,23 +47,59 @@ def Sample(p = 'train', ID = None):
         #3 channels: (intensity, horizontal grad, vertical grad)
         image = np.delete(image, 0, 0)
         image = np.delete(image, 0, 1)
+        image = np.divide(image,np.amax(image))
         gtseg = np.delete(gtseg, 0, 0)
         gtseg = np.delete(gtseg, 0, 1)
         image = np.concatenate((image,
                         np.gradient(image, edge_order=2, axis=0),
                         np.gradient(image, edge_order=2, axis=1)),
                         axis=2)
-        return(image, np.expand_dims(gtseg, axis=2))
+        nlabels = np.expand_dims(gtseg, axis=2).astype(np.float32)
+        nlabels = nlabels.astype(np.float32)
+        #elabels in a 2d array, padded with -1
+        elabels = np.negative(np.ones((480, 320, 2), np.float32))
+        G = nx.grid_2d_graph(gtseg.shape[0], gtseg.shape[1])
+        for (u,v,d) in G.edges(data = True):
+            labelu = gtseg[u[0], u[1]]
+            labelv = gtseg[v[0], v[1]]
+
+            if u[0] == v[0]:
+                channel = 0
+            else:
+                channel = 1
+
+            if abs(labelu - labelv) < 1.0:
+                elabels[u[0], u[1], channel] = 1.0
+            else:
+                elabels[u[0], u[1], channel] = -1.0
+
+        return (image, nlabels, elabels)
 
 def TrainData():
-    images = np.array([Sample('train', str(ID))[0] for ID in TrainIDs()])
-    gtseg = np.array([Sample('train', str(ID))[1] for ID in TrainIDs()])
-    return images, gtseg
+    #images = np.array([Sample('train', str(ID))[0] for ID in TrainIDs()])
+    #nlabels = np.array([Sample('train', str(ID))[1] for ID in TrainIDs()])
+    #elabels = np.array([Sample('train', str(ID))[2] for ID in TrainIDs()])
+
+    images = []
+    nlabels = []
+    elabels = []
+    for ID in TrainIDs():
+        s = Sample('train', str(ID))
+        images.append(s[0])
+        nlabels.append(s[1])
+        elabels.append(s[2])
+    return np.array(images), np.array(nlabels), np.array(elabels)
 
 def ValData():
-    images = np.array([Sample('val', str(ID))[0] for ID in ValIDs()])
-    gtseg = np.array([Sample('val', str(ID))[1] for ID in ValIDs()])
-    return images, gtseg
+    images = []
+    nlabels = []
+    elabels = []
+    for ID in TrainIDs():
+        s = Sample('val', str(ID))
+        images.append(s[0])
+        nlabels.append(s[1])
+        elabels.append(s[2])
+    return images, nlabels, elabels
 
 def TrainGenerator():
     data_gen_args = dict(featurewise_center=True,
@@ -90,5 +128,11 @@ def ValGenerator():
 if __name__ == '__main__':
     print("Init")
     ID = '2092'
-    TrainSample(ID)
+    #data = TrainData()
+    file = open('save.p', 'rb')
+    data = pickle.load(file)
+    file.close()
+    print(data[0].shape)
+    print(data[1].shape)
+    print(data[2].shape)
     print("Exit")
