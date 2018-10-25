@@ -2,6 +2,7 @@ from data import *
 import model
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler
 
+"""
 class BSDS500Sequence(Sequence):
 
     def __init__(self, images, nlabels, elabels, batch_size):
@@ -19,11 +20,12 @@ class BSDS500Sequence(Sequence):
         batch_elabels = self.elabels[idx * self.batch_size:(idx + 1) * self.batch_size]
 
         return np.array(batch_images), np.array(batch_nlabels), np.array(batch_elabels)
+"""
 
 if __name__ == '__main__':
     print("Init")
     model = model.unet()
-    model_checkpoint = ModelCheckpoint('C:/unet.hdf5', monitor='loss',verbose=1, save_best_only=True)
+    model_checkpoint = ModelCheckpoint('unet.hdf5', monitor='loss',verbose=1, save_best_only=True)
     
     print('Processing data')
     file = open('save.p', 'rb')
@@ -32,12 +34,12 @@ if __name__ == '__main__':
     #val = ValData()
     print('Done processing data')
     
-    print('Preparing dataset')
-    dataset = BSDS500Sequence(data[0], data[1], data[2], 2)
-    print('Done preparing dataset')
+    #print('Preparing dataset')
+    #dataset = BSDS500Sequence(data[0], data[1], data[2], 2)
+    #print('Done preparing dataset')
     
     print('Start training')
-    history = model.fit({'images': data[0], 'nlabels': data[1]}, data[2],
+    history = model.fit({'input_image': data[0], 'input_nlabels': data[1]}, data[2],
                     batch_size=2, epochs=5, verbose=1, callbacks=[model_checkpoint], shuffle=True)
     #model.fit_generator(generator,steps_per_epoch=1000,epochs=5)
     print("Exit")

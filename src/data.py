@@ -54,8 +54,7 @@ def Sample(p = 'train', ID = None):
                         np.gradient(image, edge_order=2, axis=0),
                         np.gradient(image, edge_order=2, axis=1)),
                         axis=2)
-        nlabels = np.expand_dims(gtseg, axis=2).astype(np.float32)
-        nlabels = nlabels.astype(np.float32)
+        nlabels = np.expand_dims(gtseg, axis=2)
         #elabels in a 2d array, padded with -1
         elabels = np.negative(np.ones((480, 320, 2), np.float32))
         G = nx.grid_2d_graph(gtseg.shape[0], gtseg.shape[1])
@@ -73,7 +72,7 @@ def Sample(p = 'train', ID = None):
             else:
                 elabels[u[0], u[1], channel] = -1.0
 
-        return (image, nlabels, elabels)
+        return (image, nlabels.astype(float), elabels)
 
 def TrainData():
     #images = np.array([Sample('train', str(ID))[0] for ID in TrainIDs()])
@@ -100,6 +99,8 @@ def ValData():
         nlabels.append(s[1])
         elabels.append(s[2])
     return images, nlabels, elabels
+
+
 
 def TrainGenerator():
     data_gen_args = dict(featurewise_center=True,

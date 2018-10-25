@@ -396,4 +396,4 @@ def FindRandErrorAtThreshold(WG, gtLabels, T):
 
         randError = (localPos + localNeg) / (totalPos + totalNeg)
 		        
-    return(-1.0)
+    return(randError)
