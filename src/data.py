@@ -129,9 +129,9 @@ def ValGenerator():
 if __name__ == '__main__':
     print("Init")
     ID = '2092'
-    #data = TrainData()
-    file = open('save.p', 'rb')
-    data = pickle.load(file)
+    data = TrainData()
+    file = open('save.p', 'wb')
+    pickle.dump(data)
     file.close()
     print(data[0].shape)
     print(data[1].shape)
