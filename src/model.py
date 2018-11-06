@@ -36,7 +36,7 @@ def rand_weight(y_pred, nlabels):
         negError = 0.0
 
         WY = np.zeros((1, 480, 320, 2), np.float32)
-        #SY = np.ones((1, 480, 320, 2), np.float32)
+        SY = np.ones((1, 480, 320, 2), np.float32)
         for i in range(len(posCounts)):
             posError = posError - posCounts[i]
             negError = negError + negCounts[i]
@@ -52,30 +52,36 @@ def rand_weight(y_pred, nlabels):
             
             if WS > 0.0:
                 WY[0, u[0], u[1], channel] = abs(WS) + posWeight
-                #if nlabels[u] != nlabels[v]:
-                    #SY[0, u[0], u[1], channel] = -1.0
+                if nlabels_dict[u] != nlabels_dict[v]:
+                    SY[0, u[0], u[1], channel] = -1.0
             if WS < 0.0: 
                 WY[0, u[0], u[1], channel] = abs(WS) + negWeight
-                #if nlabels[u] == nlabels[v]:
-                    #SY[0, u[0], u[1], channel] = -1.0
+                if nlabels_dict[u] == nlabels_dict[v]:
+                    SY[0, u[0], u[1], channel] = -1.0
         
         # Std normalization
         totalW = np.sum(WY)
         if totalW > 0.0:
             WY = WY / totalW
 
-        return WY
-    WY = tf.py_func(GetRandWeights, [nlabels, y_pred], [tf.float32])
-    return WY
+        return WY, SY
+    WY, SY = tf.py_func(GetRandWeights, [nlabels, y_pred], [tf.float32, tf.float32])
+    return [WY, SY]
 
-def ff_loss(WY):
+def output_shape(input_shape):
+	return [input_shape, input_shape]
+
+def ff_loss(WY, SY):
     def f_loss(y_true, y_pred):
-        edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(y_pred, y_true)))
+        newY = tf.multiply(SY, y_true)
+
+        edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(y_pred, newY)))
 
         weightedLoss = tf.multiply(WY, edgeLoss)
 
         return tf.reduce_sum(weightedLoss)
     return f_loss
+
 
 def unet(pretrained_weights=None):
     input_image = Input(shape=(480, 320, 3), name='input_image')
@@ -120,11 +126,11 @@ def unet(pretrained_weights=None):
     conv9 = Conv2D(2, 3, activation = 'relu', padding = 'same', kernel_initializer = 'he_normal')(conv9)
     conv10 = Conv2D(2, 1, activation = 'tanh')(conv9)
     
-    weight = Lambda(rand_weight, arguments={'nlabels': input_nlabels})(conv10)
+    WY, SY = Lambda(rand_weight, output_shape=output_shape, arguments={'nlabels': input_nlabels})(conv10)
 
 
     model = Model(input=[input_image, input_nlabels], output = conv10)
-    model.compile(optimizer = Adam(lr = 1e-4), loss = ff_loss(weight))
+    model.compile(optimizer = Adam(lr = 1e-4), loss = ff_loss(WY, SY))
 
     
 

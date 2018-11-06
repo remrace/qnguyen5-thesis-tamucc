@@ -12,7 +12,7 @@ INPUT_SIZE = (480, 320, 3)
 def test():
     my_model = model.unet()
     my_model.load_weights("unet.hdf5")
-    ID = '2092'
+    ID = '25098'
     t = data.Sample('train', ID = ID)
     image = np.expand_dims(t[0], axis = 0)
     nlabel = np.expand_dims(t[1], axis = 0)
@@ -36,7 +36,7 @@ def test():
 
         if d['weight'] * elabel[u[0], u[1], channel] < 0.0:
             correlation_clustering_error += abs(d['weight'])
-    theta = 0
+    theta = 0.0
     G.remove_edges_from([(u,v) for (u,v,d) in  G.edges(data=True) if d['weight']<=theta])
     
     pred_label_dict = dict()
