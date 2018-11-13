@@ -8,7 +8,7 @@ import SegEval as ev
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from scipy import stats
 
-INPUT_SIZE = (481, 321, 3)
+INPUT_SIZE = (320, 320, 3)
 NUM_OUTPUTS = 1
 KERNEL_SIZE = 5
 N = (INPUT_SIZE[0]-1) * INPUT_SIZE[1] + (INPUT_SIZE[1]-1) * INPUT_SIZE[0]

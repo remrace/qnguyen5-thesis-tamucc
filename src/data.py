@@ -15,7 +15,7 @@ GT_EXT = '.mat'
 IMG_EXT = '.jpg'
 INPUT_SIZE = (481, 321, 3)
 NUM_OUTPUTS = 1
-KERNEL_SIZE = 5
+KERNEL_SIZE = 3
 N = (INPUT_SIZE[0]-1) * INPUT_SIZE[1] + (INPUT_SIZE[1]-1) * INPUT_SIZE[0]
 D = KERNEL_SIZE * KERNEL_SIZE * 3  
 
@@ -49,6 +49,7 @@ def Sample(p = 'train', ID = None):
         if image.shape[0] < image.shape[1]:
             image = np.rot90(image, k=1, axes=(0,1))
             gtseg = np.rot90(gtseg, k=1, axes=(0,1))
+        
         
         '''
         #delete one row and one column so the data fits the unet
@@ -88,7 +89,7 @@ def Sample(p = 'train', ID = None):
 
         G = nx.grid_2d_graph(gtseg.shape[0], gtseg.shape[1])
         for (u,v) in G.edges():
-            '''
+            
             uimg = image[u[0]:(u[0]+KERNEL_SIZE), u[1]:(u[1]+KERNEL_SIZE), :]
             vimg = image[v[0]:(v[0]+KERNEL_SIZE), v[1]:(v[1]+KERNEL_SIZE), :]
             
@@ -99,7 +100,7 @@ def Sample(p = 'train', ID = None):
             
             aimg = (uimg + vimg) / 2.0
             X_train[upto,:] = np.reshape(aimg, (1, D))
-            '''
+            
             labelu = gtseg[u[0], u[1]]
             labelv = gtseg[v[0], v[1]]
             if abs(labelu - labelv) < 1.0:
@@ -108,7 +109,7 @@ def Sample(p = 'train', ID = None):
                 elabels[upto, 0] = -1.0
             upto = upto + 1
 
-        return (image, nlabels, elabels)
+        return (X_train, nlabels, elabels)
 
 def TrainData():
     #images = np.array([Sample('train', str(ID))[0] for ID in TrainIDs()])
@@ -119,12 +120,12 @@ def TrainData():
     nlabels = []
     elabels = []
     ids = TrainIDs()
-    for i in range(100):
+    for i in range(5):
         s = Sample('train', str(ids[i]))
         images.append(s[0])
         nlabels.append(s[1])
         elabels.append(s[2])
-    return np.array(images), np.array(nlabels), np.array(elabels)
+    return np.array(images, np.float32), np.array(nlabels, np.float32), np.array(elabels, np.float32)
 
 def ValData():
     images = []
