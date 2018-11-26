@@ -14,12 +14,10 @@ from keras import losses
 from keras import models
 from keras import backend as K
 from scipy import signal
-INPUT_SIZE = (481, 321, 3)
-KERNEL_SIZE = 3
-N = (INPUT_SIZE[0]-1) * INPUT_SIZE[1] + (INPUT_SIZE[1]-1) * INPUT_SIZE[0]
-D = KERNEL_SIZE * KERNEL_SIZE * 3  
+INPUT_SIZE = (480, 320, 3)
 
-'''
+
+
 def rand_weight(y_pred, nlabels):
     def GetRandWeights(n, y):
         G = nx.grid_2d_graph(INPUT_SIZE[0], INPUT_SIZE[1])
@@ -45,11 +43,13 @@ def rand_weight(y_pred, nlabels):
         WY = np.zeros((1, 480, 320, 2), np.float32)
         SY = np.zeros((1, 480, 320, 2), np.float32)
         for i in range(len(posCounts)):
-            posError = posError - posCounts[i]
-            negError = negError + negCounts[i]
+            #posError = posError - posCounts[i]
+            #negError = negError + negCounts[i]
 
-            WS = posError - negError
-        
+            #WS = posError - negError
+
+            WS = posCounts[i] - negCounts[i]
+
             (u,v) = mstEdges[i]
 
             if u[0] == v[0]: #vertical, dy, channel 0
@@ -69,8 +69,7 @@ def rand_weight(y_pred, nlabels):
                 SY[0, u[0], u[1], channel] = -1.0
         
         # Std normalization
-        totalW = np.sum(WY)
-        WY = np.divide(WY, totalW)
+
 
         return WY, SY
     WY, SY = tf.py_func(GetRandWeights, [nlabels, y_pred], [tf.float32, tf.float32])
@@ -130,15 +129,21 @@ def rand_weight(y_pred, nlabels):
 
     return [WY, SY]
 
-
+'''
 def output_shape(input_shape):
 	return [input_shape, input_shape]
 
 def ff_loss(WY, SY):
+    SY = tf.reshape(SY, [-1])
+    WY = tf.reshape(WY, [-1])
+    WY = tf.divide(WY, tf.reduce_sum(WY))
     def f_loss(y_true, y_pred):
-        newY = tf.multiply(SY, y_true)
+        y_true = tf.reshape(y_true, [-1])
+        y_pred = tf.reshape(y_pred, [-1])
+        
+        #newY = tf.maximum(SY, y_true)
 
-        edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(y_pred, newY)))
+        edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(y_pred, SY)))
 
         weightedLoss = tf.multiply(WY, edgeLoss)
 
@@ -148,7 +153,7 @@ def ff_loss(WY, SY):
 
 
 def unet(pretrained_weights=None):
-    input_image = layers.Input(shape=(N, D), name='input_image')
+    input_image = layers.Input(shape=(INPUT_SIZE), name='input_image')
     input_nlabels = layers.Input(shape=(INPUT_SIZE[0], INPUT_SIZE[1],1), name='input_nlabels')
     
     '''
@@ -193,12 +198,20 @@ def unet(pretrained_weights=None):
     conv10 = layers.Conv2D(1, 1, activation = 'sigmoid')(conv9)
     '''
     #transform outputs to shape (?, 204160, 1)
-    outputs = layers.Dense(1, input_shape = (N,D), activation='relu')(input_image)
-    outputs = layers.Conv1D(2, 25, activation = 'relu', padding = 'same')(outputs)
-    outputs = layers.Conv1D(1, 1, padding = 'same')(outputs)
-    WY, SY = layers.Lambda(rand_weight, output_shape=output_shape, arguments={'nlabels': input_nlabels})(outputs)
+   
+    aff00 = layers.Conv2D(filters = 1, kernel_size = 25, padding = 'same', data_format='channels_last', activation = 'relu')(input_image)
+    aff10 = layers.Conv2D(filters = 1, kernel_size = 25, padding = 'same', data_format='channels_last', activation = 'relu')(input_image)
+    aff01 = layers.Conv2D(1, 1, padding = 'same', activation = 'sigmoid')(aff00)
+    aff11 = layers.Conv2D(1, 1, padding = 'same', activation = 'sigmoid')(aff10)
+    aff02 = layers.Conv2D(1, 1, padding = 'same')(aff01)
+    aff12 = layers.Conv2D(1, 1, padding = 'same')(aff11)
+    aff = layers.Concatenate(axis = -1)([aff02,aff12])
 
-    model = models.Model(inputs=[input_image, input_nlabels], outputs = [outputs])
+    WY, SY = layers.Lambda(rand_weight, output_shape=output_shape, arguments={'nlabels': input_nlabels})(aff)
+
+
+
+    model = models.Model(inputs=[input_image, input_nlabels], outputs = [aff])
     model.summary()
     model.compile(optimizer = SGD(lr=0.1), loss = ff_loss(WY, SY))
     
