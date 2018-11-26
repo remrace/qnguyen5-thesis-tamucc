@@ -1,4 +1,4 @@
-import data
+from data import *
 import model
 import numpy as np
 import networkx as nx
@@ -8,49 +8,36 @@ import SegEval as ev
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from scipy import stats
 
-INPUT_SIZE = (320, 320, 3)
+INPUT_SIZE = (481, 321, 3)
 NUM_OUTPUTS = 1
 KERNEL_SIZE = 5
 N = (INPUT_SIZE[0]-1) * INPUT_SIZE[1] + (INPUT_SIZE[1]-1) * INPUT_SIZE[0]
 D = KERNEL_SIZE * KERNEL_SIZE * 3 
 
 def test():
-    theta = 0.0
     my_model = model.unet()
-    my_model.load_weights('11-8-0.hdf5')
-    ID = '189080'
-    t = data.Sample('val', ID = ID)
-    image = np.expand_dims(t[0], axis = 0)
-    nlabel = np.expand_dims(t[1], axis = 0)
-    elabel = np.expand_dims(t[2], axis = 0)
+    my_model.load_weights('11-26.hdf5')
+    data = TrainData()
     
-    result = my_model.predict([image, nlabel], batch_size=1)
+    pred = my_model.predict([data[0], data[1]], batch_size=1)
     
-    print(image.shape, nlabel.shape, result.shape)
+    images, nlabels, elabels = data[0][0], data[1][0], data[2][0]
     
-    G = nx.grid_2d_graph(INPUT_SIZE[0], INPUT_SIZE[1])
-    nlabels_dict = dict()
-    upto = 0
-    for u, v, d in G.edges(data = True):
-        d['weight'] = float(result[0,upto,0])
-        nlabels_dict[u] = nlabel[0, u[0], u[1], 0]
-        nlabels_dict[v] = nlabel[0, v[0], v[1], 0]
-        upto = upto + 1
+    G = nx.grid_2d_graph(elabels.shape[0], elabels.shape[1])
+    for (u,v,d) in G.edges(data = True):
+        if u[0] == v[0]:
+            channel = 0
+        else:
+            channel = 1
 
-    predMin = result.min()
-    predMax = result.max()
-    print("Prediction has range " + str(predMin) + " -> " + str(predMax))
+        d['weight'] = elabels[u[0], u[1], channel]
 
-    finalRand = ev.FindRandErrorAtThreshold(G, nlabels_dict, 0)    
-    print("At threshold " + str(0) + " Final Error: " + str(finalRand))
-
-    theta = 1000.0
+    theta = 0.0
     lg = G.copy()    
     lg.remove_edges_from([(u,v) for (u,v,d) in  G.edges(data=True) if d['weight']<=theta])
     L = {node:color for color,comp in enumerate(nx.connected_components(lg)) for node in comp}
 
-    gt_image = np.squeeze(nlabel)
-    result_image = np.zeros((INPUT_SIZE[0], INPUT_SIZE[1]))
+    result_image = np.zeros((elabels.shape[0], elabels.shape[1]))
 
     for j in range(result_image.shape[1]):
         for i in range(result_image.shape[0]):
@@ -58,11 +45,16 @@ def test():
 
     fig=plt.figure(figsize=(8, 4))
 
-    fig.add_subplot(1, 3, 1)
-    plt.imshow(gt_image, cmap='nipy_spectral')
-    fig.add_subplot(1, 3, 2)
+    fig.add_subplot(1, 5, 1)
+    plt.imshow(images)
+    fig.add_subplot(1, 5, 2)
+    plt.imshow(np.squeeze(nlabels), cmap='nipy_spectral')
+    fig.add_subplot(1, 5, 3)
+    plt.imshow(elabels[:,:,0], cmap='nipy_spectral')
+    fig.add_subplot(1, 5, 4)
+    plt.imshow(elabels[:,:,1], cmap='nipy_spectral')
+    fig.add_subplot(1, 5, 5)
     plt.imshow(result_image, cmap='nipy_spectral')
-    
     plt.show()
     
     

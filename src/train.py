@@ -8,33 +8,26 @@ if __name__ == '__main__':
     
     print('Getting data')
     
-    file = open('data_vect.p', 'rb')
-    data = pickle.load(file)
-    #data = TrainData()
-    print(data[0].shape)
-    print(data[1].shape)
-    print(data[2].shape)
-    file.close()
+    data = TrainData()
     
     print('Done getting data')
     
     model = model.unet()
-    model_checkpoint = ModelCheckpoint('11-12-0.hdf5', monitor='val_loss',verbose=1, save_best_only=True)
-    model_earlyStopping = EarlyStopping(monitor='val_loss', min_delta=0, patience=5, verbose=1, mode='auto')
+    model_checkpoint = ModelCheckpoint('11-26.hdf5', monitor='loss',verbose=1, save_best_only=True)
     
     
     print('Start training')
 
     history = model.fit({'input_image': data[0], 'input_nlabels': data[1]}, data[2],
-                    batch_size=1, epochs=100, verbose=1, callbacks=[model_checkpoint, model_earlyStopping], validation_split=0.2, shuffle=True)
-    
+                    batch_size=1, epochs=100, verbose=1, callbacks=[model_checkpoint], shuffle=True)
+    #model.save_weights('my_model_weights.h5')
     print('Done training')
     # Plot training & validation loss values
     plt.plot(history.history['loss'])
-    plt.plot(history.history['val_loss'])
+    #plt.plot(history.history['val_loss'])
     plt.title('Model loss')
     plt.ylabel('Loss')
     plt.xlabel('Epoch')
-    plt.legend(['Train', 'Test'], loc='upper left')
+    plt.legend(['Train'], loc='upper left')
     plt.show()
     print("Exit")
