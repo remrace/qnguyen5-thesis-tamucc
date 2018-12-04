@@ -5,6 +5,7 @@ import networkx as nx
 import pickle
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
+import random
 TRAIN_GT_DIR = 'C:/data/BSDS500/data/groundTruth/train/'
 TRAIN_IMG_DIR = 'C:/data/BSDS500/data/images/train/'
 TEST_GT_DIR = 'C:/data/BSDS500/data/groundTruth/test/'
@@ -37,11 +38,11 @@ def Sample(p = 'train', ID = None):
     else:
         segId = 0
         if p == 'train':
-            image = TFimage.img_to_array(TFimage.load_img(path=TRAIN_IMG_DIR+ID+IMG_EXT, grayscale=False,
+            image = TFimage.img_to_array(TFimage.load_img(path=TRAIN_IMG_DIR+ID+IMG_EXT, grayscale=True,
                                                 target_size=None, interpolation='nearest'))
             groundTruth = loadmat(TRAIN_GT_DIR+ID+GT_EXT)
         elif p == 'val':
-            image = TFimage.img_to_array(TFimage.load_img(path=VAL_IMG_DIR+ID+IMG_EXT, grayscale=False,
+            image = TFimage.img_to_array(TFimage.load_img(path=VAL_IMG_DIR+ID+IMG_EXT, grayscale=True,
                                                 target_size=None, interpolation='nearest'))
             groundTruth = loadmat(VAL_GT_DIR+ID+GT_EXT)
 
@@ -74,7 +75,7 @@ def Sample(p = 'train', ID = None):
         nlabels = np.expand_dims(gtseg, axis=2)
         return (image, nlabels, elabels)
 
-def TrainData():
+def TrainData(num_samples=20):
     #images = np.array([Sample('train', str(ID))[0] for ID in TrainIDs()])
     #nlabels = np.array([Sample('train', str(ID))[1] for ID in TrainIDs()])
     #elabels = np.array([Sample('train', str(ID))[2] for ID in TrainIDs()])
@@ -83,23 +84,29 @@ def TrainData():
     nlabels = []
     elabels = []
     ids = TrainIDs()
-    for i in range(1):
+    for i in range(num_samples):
         s = Sample('train', str(ids[i]))
         images.append(s[0])
         nlabels.append(s[1])
         elabels.append(s[2])
     return np.array(images), np.array(nlabels), np.array(elabels)
 
-def ValData():
+def ValData(num_samples=20):
+    #images = np.array([Sample('train', str(ID))[0] for ID in TrainIDs()])
+    #nlabels = np.array([Sample('train', str(ID))[1] for ID in TrainIDs()])
+    #elabels = np.array([Sample('train', str(ID))[2] for ID in TrainIDs()])
+
     images = []
     nlabels = []
     elabels = []
-    for ID in TrainIDs():
-        s = Sample('val', str(ID))
+    ids = ValIDs()
+    random_ids = random.sample(ids, num_samples)
+    for id in random_ids:
+        s = Sample('val', str(id))
         images.append(s[0])
         nlabels.append(s[1])
         elabels.append(s[2])
-    return images, nlabels, elabels
+    return np.array(images), np.array(nlabels), np.array(elabels)
 
 
 def test_sample(images, nlabels, elabels):
@@ -127,7 +134,7 @@ def test_sample(images, nlabels, elabels):
     fig=plt.figure(figsize=(8, 4))
 
     fig.add_subplot(1, 4, 1)
-    plt.imshow(images)
+    plt.imshow(np.squeeze(images))
     fig.add_subplot(1, 4, 2)
     plt.imshow(np.squeeze(nlabels), cmap='nipy_spectral')
     fig.add_subplot(1, 4, 3)
@@ -150,8 +157,15 @@ if __name__ == '__main__':
     file = open('data_image.p', 'rb')
     data = pickle.load(file)
     file.close()
+    
+    data = TrainData(200)
+    f = open('gray-image_nlabels_elabels.p', 'wb')
+    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    f.close()
     '''
-    data = TrainData()
+    file = open('gray-image_nlabels_elabels.p', 'rb')
+    data = pickle.load(file)
+    file.close()
     print(data[0].shape)
     print(data[1].shape)
     print(data[2].shape)

@@ -14,7 +14,7 @@ from keras import losses
 from keras import models
 from keras import backend as K
 from scipy import signal
-INPUT_SIZE = (480, 320, 3)
+INPUT_SIZE = (480, 320, 1)
 
 
 
@@ -43,12 +43,11 @@ def rand_weight(y_pred, nlabels):
         WY = np.zeros((1, 480, 320, 2), np.float32)
         SY = np.zeros((1, 480, 320, 2), np.float32)
         for i in range(len(posCounts)):
-            #posError = posError - posCounts[i]
-            #negError = negError + negCounts[i]
+            posError = posError - posCounts[i]
+            negError = negError + negCounts[i]
 
-            #WS = posError - negError
+            WS = posError - negError
 
-            WS = posCounts[i] - negCounts[i]
 
             (u,v) = mstEdges[i]
 
@@ -69,30 +68,27 @@ def rand_weight(y_pred, nlabels):
                 SY[0, u[0], u[1], channel] = -1.0
         
         # Std normalization
-
+        totalW = np.sum(WY)
+        WY = np.divide(WY, totalW)
 
         return WY, SY
     WY, SY = tf.py_func(GetRandWeights, [nlabels, y_pred], [tf.float32, tf.float32])
     return [WY, SY]
-'''
 
-def rand_weight(y_pred, nlabels):
-    def GetRandWeights(y, n):
-        WY = np.zeros( (1, N, 1), np.float32)
-        SY = np.ones( (1, N, 1), np.float32)
-        
+def rand_weight_inference(y_pred, nlabels):
+    def GetRandWeights(n, y):
         G = nx.grid_2d_graph(INPUT_SIZE[0], INPUT_SIZE[1])
         nlabels_dict = dict()
-        edgeInd = dict()
-        upto = 0
         for u, v, d in G.edges(data = True):
-            d['weight'] = y[0, upto, 0]
-            edgeInd[(u,v)] = upto
+            if u[0] == v[0]:
+                channel = 0
+            else:
+                channel = 1
+            d['weight'] =  y[0, u[0], u[1], channel]
             nlabels_dict[u] = n[0, u[0], u[1], 0]
             nlabels_dict[v] = n[0, v[0], v[1], 0]
-            upto = upto + 1
 
-        [posCounts, negCounts, mstEdges, totalPos, totalNeg] = ev.FindRandCounts(G, nlabels_dict)
+        [bestT, lowE, posCounts, negCounts, mstEdges, totalPos, totalNeg] = ev.FindMinEnergyAndRandCounts(G, nlabels)
         
         # for class imbalance
         posWeight = 0.0
@@ -101,119 +97,145 @@ def rand_weight(y_pred, nlabels):
         posError = totalPos
         negError = 0.0
 
-        
+        WY = np.zeros((1, 480, 320, 2), np.float32)
+        SY = np.zeros((1, 480, 320, 2), np.float32)
+        TY = bestT*np.ones((1, 480, 320, 2), np.float32)
         for i in range(len(posCounts)):
             posError = posError - posCounts[i]
             negError = negError + negCounts[i]
 
             WS = posError - negError
-            
-            ind = edgeInd[ mstEdges[i] ]
-            WY[0, ind] = np.abs(WS)
 
+
+            (u,v) = mstEdges[i]
+
+            if u[0] == v[0]: #vertical, dy, channel 0
+                channel = 0
+            else: #horizontal, dx, channel 1
+                channel = 1
             
             if WS > 0.0:
-                if nlabels_dict[u] != nlabels_dict[v]:
-                    SY[0, ind, 0] = -1.0
-                
+                WY[0, u[0], u[1], channel] = abs(WS) + posWeight
+                #if nlabels_dict[u] != nlabels_dict[v]:
+                    #SY[0, u[0], u[1], channel] = -1.0
+                SY[0, u[0], u[1], channel] = 1.0
             if WS < 0.0: 
-                if nlabels_dict[u] == nlabels_dict[v]:
-                    SY[0, ind, 0] = -1.0
+                WY[0, u[0], u[1], channel] = abs(WS) + negWeight
+                #if nlabels_dict[u] == nlabels_dict[v]:
+                    #SY[0, u[0], u[1], channel] = -1.0
+                SY[0, u[0], u[1], channel] = -1.0
         
         # Std normalization
         totalW = np.sum(WY)
-        WY = WY / totalW
+        WY = np.divide(WY, totalW)
 
-        return WY, SY
-    WY, SY = tf.py_func(GetRandWeights, [y_pred, nlabels], [tf.float32, tf.float32])
+        return WY, SY, TY
+    WY, SY, TY = tf.py_func(GetRandWeights, [nlabels, y_pred], [tf.float32, tf.float32, tf.float32])
+    return [WY, SY, TY]
 
-    return [WY, SY]
+def sobel_edge(image):
+    out = tf.image.sobel_edges(image)
+    return tf.squeeze(out, [-2])
 
-'''
-def output_shape(input_shape):
+def sobel_output_shape(input_shape):
+    return (input_shape[0], input_shape[1], input_shape[2], 2)
+
+def randweight_output_shape(input_shape):
 	return [input_shape, input_shape]
 
-def ff_loss(WY, SY):
+def randweight_output_shape_inference(input_shape):
+	return [input_shape, input_shape, input_shape]
+
+def ff_loss(WY, SY, TY = None):
     SY = tf.reshape(SY, [-1])
     WY = tf.reshape(WY, [-1])
-    WY = tf.divide(WY, tf.reduce_sum(WY))
     def f_loss(y_true, y_pred):
         y_true = tf.reshape(y_true, [-1])
         y_pred = tf.reshape(y_pred, [-1])
         
         #newY = tf.maximum(SY, y_true)
-
-        edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(y_pred, SY)))
+        if TY is not None:
+            edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(tf.subtract(y_pred, TY), SY)))
+        else:
+            edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(y_pred, SY)))
 
         weightedLoss = tf.multiply(WY, edgeLoss)
 
         return tf.reduce_sum(weightedLoss)
     return f_loss
 
+def conv_block(input_tensor, num_filters):
+    encoder = layers.Conv2D(num_filters, (3, 3), padding='same')(input_tensor)
+    encoder = layers.BatchNormalization()(encoder)
+    encoder = layers.Activation('relu')(encoder)
+    encoder = layers.Conv2D(num_filters, (3, 3), padding='same')(encoder)
+    encoder = layers.BatchNormalization()(encoder)
+    encoder = layers.Activation('relu')(encoder)
+    return encoder
+
+def encoder_block(input_tensor, num_filters):
+    encoder = conv_block(input_tensor, num_filters)
+    encoder_pool = layers.MaxPooling2D((2, 2), strides=(2, 2))(encoder)
+    
+    return encoder_pool, encoder
+
+def decoder_block(input_tensor, concat_tensor, num_filters):
+    decoder = layers.Conv2DTranspose(num_filters, (2, 2), strides=(2, 2), padding='same')(input_tensor)
+    decoder = layers.concatenate([concat_tensor, decoder], axis=-1)
+    decoder = layers.BatchNormalization()(decoder)
+    decoder = layers.Activation('relu')(decoder)
+    decoder = layers.Conv2D(num_filters, (3, 3), padding='same')(decoder)
+    decoder = layers.BatchNormalization()(decoder)
+    decoder = layers.Activation('relu')(decoder)
+    decoder = layers.Conv2D(num_filters, (3, 3), padding='same')(decoder)
+    decoder = layers.BatchNormalization()(decoder)
+    decoder = layers.Activation('relu')(decoder)
+    return decoder
 
 
-def unet(pretrained_weights=None):
+def unet(USE_CC_INFERENCE=None, pretrained_weights=None):
     input_image = layers.Input(shape=(INPUT_SIZE), name='input_image')
     input_nlabels = layers.Input(shape=(INPUT_SIZE[0], INPUT_SIZE[1],1), name='input_nlabels')
+
+    encoder0_pool, encoder0 = encoder_block(input_image, 32)
+
+    encoder1_pool, encoder1 = encoder_block(encoder0_pool, 64)
+
+    encoder2_pool, encoder2 = encoder_block(encoder1_pool, 128)
+
+    encoder3_pool, encoder3 = encoder_block(encoder2_pool, 256)
+
+    encoder4_pool, encoder4 = encoder_block(encoder3_pool, 512)
+
+    center = conv_block(encoder4_pool, 1024)
+
+    decoder4 = decoder_block(center, encoder4, 512)
+
+    decoder3 = decoder_block(decoder4, encoder3, 256)
+
+    decoder2 = decoder_block(decoder3, encoder2, 128)
+
+    decoder1 = decoder_block(decoder2, encoder1, 64)
+ 
+    decoder0 = decoder_block(decoder1, encoder0, 32)
+
+    outputs = layers.Conv2D(1, (1, 1), activation='sigmoid')(decoder0)
+
+    enhanced_image = layers.Conv2D(1, 1)(outputs)
     
-    '''
-    conv1 = layers.Conv2D(64, 3, activation = 'relu', padding = 'same')(input_image)
-    conv1 = layers.Conv2D(64, 3, activation = 'relu', padding = 'same')(conv1)
-    pool1 = layers.MaxPooling2D(pool_size=(2, 2))(conv1)
-    conv2 = layers.Conv2D(128, 3, activation = 'relu', padding = 'same')(pool1)
-    conv2 = layers.Conv2D(128, 3, activation = 'relu', padding = 'same')(conv2)
-    pool2 = layers.MaxPooling2D(pool_size=(2, 2))(conv2)
-    conv3 = layers.Conv2D(256, 3, activation = 'relu', padding = 'same')(pool2)
-    conv3 = layers.Conv2D(256, 3, activation = 'relu', padding = 'same')(conv3)
-    pool3 = layers.MaxPooling2D(pool_size=(2, 2))(conv3)
-    conv4 = layers.Conv2D(512, 3, activation = 'relu', padding = 'same')(pool3)
-    conv4 = layers.Conv2D(512, 3, activation = 'relu', padding = 'same')(conv4)
-    drop4 = layers.Dropout(0.5)(conv4)
-    pool4 = layers.MaxPooling2D(pool_size=(2, 2))(drop4)
-
-    conv5 = layers.Conv2D(1024, 3, activation = 'relu', padding = 'same')(pool4)
-    conv5 = layers.Conv2D(1024, 3, activation = 'relu', padding = 'same')(conv5)
-    drop5 = layers.Dropout(0.5)(conv5)
-
-    up6 = layers.Conv2D(512, 2, activation = 'relu', padding = 'same')(UpSampling2D(size = (2,2))(drop5))
-    merge6 = layers.Concatenate(axis = 3)([drop4,up6])
-    conv6 = layers.Conv2D(512, 3, activation = 'relu', padding = 'same')(merge6)
-    conv6 = layers.Conv2D(512, 3, activation = 'relu', padding = 'same')(conv6)
-
-    up7 = layers.Conv2D(256, 2, activation = 'relu', padding = 'same')(UpSampling2D(size = (2,2))(conv6))
-    merge7 = layers.Concatenate(axis = 3)([conv3,up7])
-    conv7 = layers.Conv2D(256, 3, activation = 'relu', padding = 'same')(merge7)
-    conv7 = layers.Conv2D(256, 3, activation = 'relu', padding = 'same')(conv7)
-
-    up8 = layers.Conv2D(128, 2, activation = 'relu', padding = 'same')(UpSampling2D(size = (2,2))(conv7))
-    merge8 = layers.Concatenate(axis = 3)([conv2,up8])
-    conv8 = layers.Conv2D(128, 3, activation = 'relu', padding = 'same')(merge8)
-    conv8 = layers.Conv2D(128, 3, activation = 'relu', padding = 'same')(conv8)
-
-    up9 = layers.Conv2D(64, 2, activation = 'relu', padding = 'same')(UpSampling2D(size = (2,2))(conv8))
-    merge9 = layers.Concatenate(axis = 3)([conv1, up9])
-    conv9 = layers.Conv2D(64, 3, activation = 'relu', padding = 'same')(merge9)
-    conv9 = layers.Conv2D(64, 3, activation = 'relu', padding = 'same')(conv9)
-    conv9 = layers.Conv2D(2, 3, activation = 'relu', padding = 'same')(conv9)
-    conv10 = layers.Conv2D(1, 1, activation = 'sigmoid')(conv9)
-    '''
-    #transform outputs to shape (?, 204160, 1)
-   
-    aff00 = layers.Conv2D(filters = 1, kernel_size = 25, padding = 'same', data_format='channels_last', activation = 'relu')(input_image)
-    aff10 = layers.Conv2D(filters = 1, kernel_size = 25, padding = 'same', data_format='channels_last', activation = 'relu')(input_image)
-    aff01 = layers.Conv2D(1, 1, padding = 'same', activation = 'sigmoid')(aff00)
-    aff11 = layers.Conv2D(1, 1, padding = 'same', activation = 'sigmoid')(aff10)
-    aff02 = layers.Conv2D(1, 1, padding = 'same')(aff01)
-    aff12 = layers.Conv2D(1, 1, padding = 'same')(aff11)
-    aff = layers.Concatenate(axis = -1)([aff02,aff12])
-
-    WY, SY = layers.Lambda(rand_weight, output_shape=output_shape, arguments={'nlabels': input_nlabels})(aff)
+    aff = layers.Lambda(sobel_edge, output_shape=sobel_output_shape)(enhanced_image)
+    
+    if USE_CC_INFERENCE:
+        WY, SY, TY = layers.Lambda(rand_weight_inference, output_shape=randweight_output_shape_inference, arguments={'nlabels': input_nlabels})(aff)
+        model = models.Model(inputs=[input_image, input_nlabels], outputs = [aff])
+        model.compile(optimizer = SGD(lr=0.1), loss = ff_loss(WY, SY, TY))
+    else:
+        WY, SY = layers.Lambda(rand_weight, output_shape=randweight_output_shape, arguments={'nlabels': input_nlabels})(aff)
+        model = models.Model(inputs=[input_image, input_nlabels], outputs = [aff])
+        model.compile(optimizer = SGD(lr=0.1), loss = ff_loss(WY, SY))
 
 
-
-    model = models.Model(inputs=[input_image, input_nlabels], outputs = [aff])
     model.summary()
-    model.compile(optimizer = SGD(lr=0.1), loss = ff_loss(WY, SY))
     
     if(pretrained_weights):
     	model.load_weights(pretrained_weights)
