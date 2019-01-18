@@ -1,11 +1,14 @@
 import os
 import numpy as np
-import tensorflow.keras.preprocessing.image as TFimage
 import networkx as nx
 import pickle
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
+from skimage import data, io, filters, util
+from sklearn.preprocessing import scale
+import sklearn.feature_extraction
 import random
+import SegEval as ev
 TRAIN_GT_DIR = 'C:/data/BSDS500/data/groundTruth/train/'
 TRAIN_IMG_DIR = 'C:/data/BSDS500/data/images/train/'
 TEST_GT_DIR = 'C:/data/BSDS500/data/groundTruth/test/'
@@ -15,7 +18,7 @@ VAL_IMG_DIR = 'C:/data/BSDS500/data/images/val/'
 
 GT_EXT = '.mat'
 IMG_EXT = '.jpg'
-INPUT_SIZE = (481, 321, 3)
+INPUT_SIZE = (128, 128, 1)
 KERNEL_SIZE = 5
 N = (INPUT_SIZE[0]-1) * INPUT_SIZE[1] + (INPUT_SIZE[1]-1) * INPUT_SIZE[0]
 D = KERNEL_SIZE * KERNEL_SIZE * 3  
@@ -38,12 +41,10 @@ def Sample(p = 'train', ID = None):
     else:
         segId = 0
         if p == 'train':
-            image = TFimage.img_to_array(TFimage.load_img(path=TRAIN_IMG_DIR+ID+IMG_EXT, grayscale=True,
-                                                target_size=None, interpolation='nearest'))
+            image = io.imread(TRAIN_IMG_DIR+ID+IMG_EXT)
             groundTruth = loadmat(TRAIN_GT_DIR+ID+GT_EXT)
         elif p == 'val':
-            image = TFimage.img_to_array(TFimage.load_img(path=VAL_IMG_DIR+ID+IMG_EXT, grayscale=True,
-                                                target_size=None, interpolation='nearest'))
+            image = io.imread(TRAIN_IMG_DIR+ID+IMG_EXT)
             groundTruth = loadmat(VAL_GT_DIR+ID+GT_EXT)
 
         gtseg = groundTruth['groundTruth'][0,segId]['Segmentation'][0,0].astype(np.float32)
@@ -91,6 +92,42 @@ def TrainData(num_samples=20):
         elabels.append(s[2])
     return np.array(images), np.array(nlabels), np.array(elabels)
 
+def DataPatches(p = 'train', ID = None):
+    if ID == None:
+        print('needs to know the sample id.')
+        return
+    segId = 0
+    if p == 'train':
+        image = io.imread(TRAIN_IMG_DIR+ID+IMG_EXT, as_grey=True)
+        groundTruth = loadmat(TRAIN_GT_DIR+ID+GT_EXT)
+    elif p == 'val':
+        image = io.imread(TRAIN_IMG_DIR+ID+IMG_EXT, as_grey=True)
+        groundTruth = loadmat(VAL_GT_DIR+ID+GT_EXT)
+    image = scale(image)
+    gtseg = groundTruth['groundTruth'][0,segId]['Segmentation'][0,0].astype(np.float32)
+    image_patches = sklearn.feature_extraction.image.extract_patches_2d(image, (INPUT_SIZE[0], INPUT_SIZE[1]), max_patches=100, random_state=3)
+    gtseg_pathces = sklearn.feature_extraction.image.extract_patches_2d(gtseg, (INPUT_SIZE[0], INPUT_SIZE[1]), max_patches=100, random_state=3)
+    image_patches = np.expand_dims(image_patches, axis=-1)
+
+    n, y, x = gtseg_pathces.shape
+    crop = 18
+    gtseg_pathces = gtseg_pathces[:,crop:y-crop,crop:x-crop]
+    elabels = np.ones((gtseg_pathces.shape[0], gtseg_pathces.shape[1], gtseg_pathces.shape[2], 2), np.float32)
+    for i in range(len(gtseg_pathces)):
+        print(i)
+        seg = gtseg_pathces[i]
+        G = nx.grid_2d_graph(seg.shape[0], seg.shape[1])
+        for (u,v,d) in G.edges(data = True):
+            if u[0] == v[0]:
+                channel = 0
+            else:
+                channel = 1
+            if abs(seg[u] - seg[v]) > 0.0:
+                elabels[i, u[0], u[1], channel] = -1.0
+    nlabels = np.expand_dims(gtseg_pathces, axis=-1)
+    return image_patches, nlabels, elabels
+
+
 def ValData(num_samples=20):
     #images = np.array([Sample('train', str(ID))[0] for ID in TrainIDs()])
     #nlabels = np.array([Sample('train', str(ID))[1] for ID in TrainIDs()])
@@ -110,7 +147,6 @@ def ValData(num_samples=20):
 
 
 def test_sample(images, nlabels, elabels):
-
     G = nx.grid_2d_graph(elabels.shape[0], elabels.shape[1])
     for (u,v,d) in G.edges(data = True):
         if u[0] == v[0]:
@@ -120,9 +156,9 @@ def test_sample(images, nlabels, elabels):
 
         d['weight'] = elabels[u[0], u[1], channel]
 
-    theta = 0
+    lowT, lowE = ev.FindMinEnergyThreshold(G)
     lg = G.copy()    
-    lg.remove_edges_from([(u,v) for (u,v,d) in  G.edges(data=True) if d['weight']<=theta])
+    lg.remove_edges_from([(u,v) for (u,v,d) in  G.edges(data=True) if d['weight']<=lowT])
     L = {node:color for color,comp in enumerate(nx.connected_components(lg)) for node in comp}
 
     result_image = np.zeros((elabels.shape[0], elabels.shape[1]))
@@ -147,27 +183,28 @@ def test_sample(images, nlabels, elabels):
 
 if __name__ == '__main__':
     print("Init")
-    ID = '2092'
-    '''
-    data = TrainData()
-    f = open('data_image.p', 'wb')
-    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    
+    trainData = DataPatches(ID='94079')
+    testData = DataPatches(ID='100075')
+    
+    f = open('train_data_patches_scaled_bears.p', 'wb')
+    pickle.dump(trainData, f, protocol=pickle.HIGHEST_PROTOCOL)
     f.close()
     
-    file = open('data_image.p', 'rb')
-    data = pickle.load(file)
-    file.close()
-    
-    data = TrainData(200)
-    f = open('gray-image_nlabels_elabels.p', 'wb')
-    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    f = open('test_data_patches_scaled_bears.p', 'wb')
+    pickle.dump(testData, f, protocol=pickle.HIGHEST_PROTOCOL)
     f.close()
-    '''
-    file = open('gray-image_nlabels_elabels.p', 'rb')
-    data = pickle.load(file)
+
+    file = open('train_data_patches_scaled_bears.p', 'rb')
+    readdata = pickle.load(file)
     file.close()
-    print(data[0].shape)
-    print(data[1].shape)
-    print(data[2].shape)
-    test_sample(data[0][0], data[1][0], data[2][0])
+    print(readdata[0].shape, readdata[1].shape, readdata[2].shape)
+    test_sample(readdata[0][5], readdata[1][5], readdata[2][5])
+
+    file = open('test_data_patches_scaled_bears.p', 'rb')
+    readdata = pickle.load(file)
+    file.close()
+    print(readdata[0].shape, readdata[1].shape, readdata[2].shape)
+    test_sample(readdata[0][5], readdata[1][5], readdata[2][5])
+
     print("Exit")

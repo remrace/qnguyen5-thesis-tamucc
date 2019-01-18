@@ -14,7 +14,8 @@ from keras import losses
 from keras import models
 from keras import backend as K
 from scipy import signal
-INPUT_SIZE = (480, 320, 1)
+IMAGE_SIZE = (128, 128, 1)
+INPUT_SIZE = (128-36, 128-36, 1)
 
 
 
@@ -40,8 +41,8 @@ def rand_weight(y_pred, nlabels):
         posError = totalPos
         negError = 0.0
 
-        WY = np.zeros((1, 480, 320, 2), np.float32)
-        SY = np.zeros((1, 480, 320, 2), np.float32)
+        WY = np.zeros((1, INPUT_SIZE[0], INPUT_SIZE[1], 2), np.float32)
+        SY = np.zeros((1, INPUT_SIZE[0], INPUT_SIZE[1], 2), np.float32)
         for i in range(len(posCounts)):
             posError = posError - posCounts[i]
             negError = negError + negCounts[i]
@@ -88,7 +89,7 @@ def rand_weight_inference(y_pred, nlabels):
             nlabels_dict[u] = n[0, u[0], u[1], 0]
             nlabels_dict[v] = n[0, v[0], v[1], 0]
 
-        [bestT, lowE, posCounts, negCounts, mstEdges, totalPos, totalNeg] = ev.FindMinEnergyAndRandCounts(G, nlabels)
+        [bestT, lowE, posCounts, negCounts, mstEdges, totalPos, totalNeg] = ev.FindMinEnergyAndRandCounts(G, nlabels_dict)
         
         # for class imbalance
         posWeight = 0.0
@@ -97,9 +98,9 @@ def rand_weight_inference(y_pred, nlabels):
         posError = totalPos
         negError = 0.0
 
-        WY = np.zeros((1, 480, 320, 2), np.float32)
-        SY = np.zeros((1, 480, 320, 2), np.float32)
-        TY = bestT*np.ones((1, 480, 320, 2), np.float32)
+        WY = np.zeros((1, INPUT_SIZE[0], INPUT_SIZE[1], 2), np.float32)
+        SY = np.zeros((1, INPUT_SIZE[0], INPUT_SIZE[1], 2), np.float32)
+        TY = bestT*np.ones((1, INPUT_SIZE[0], INPUT_SIZE[1], 2), np.float32)
         for i in range(len(posCounts)):
             posError = posError - posCounts[i]
             negError = negError + negCounts[i]
@@ -149,10 +150,11 @@ def randweight_output_shape_inference(input_shape):
 def ff_loss(WY, SY, TY = None):
     SY = tf.reshape(SY, [-1])
     WY = tf.reshape(WY, [-1])
+    if TY is not None:
+        TY = tf.reshape(TY, [-1])
     def f_loss(y_true, y_pred):
         y_true = tf.reshape(y_true, [-1])
         y_pred = tf.reshape(y_pred, [-1])
-        
         #newY = tf.maximum(SY, y_true)
         if TY is not None:
             edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(tf.subtract(y_pred, TY), SY)))
@@ -194,42 +196,42 @@ def decoder_block(input_tensor, concat_tensor, num_filters):
 
 
 def unet(USE_CC_INFERENCE=None, pretrained_weights=None):
-    input_image = layers.Input(shape=(INPUT_SIZE), name='input_image')
-    input_nlabels = layers.Input(shape=(INPUT_SIZE[0], INPUT_SIZE[1],1), name='input_nlabels')
-
-    encoder0_pool, encoder0 = encoder_block(input_image, 32)
-
-    encoder1_pool, encoder1 = encoder_block(encoder0_pool, 64)
-
-    encoder2_pool, encoder2 = encoder_block(encoder1_pool, 128)
-
-    encoder3_pool, encoder3 = encoder_block(encoder2_pool, 256)
-
-    encoder4_pool, encoder4 = encoder_block(encoder3_pool, 512)
-
-    center = conv_block(encoder4_pool, 1024)
-
-    decoder4 = decoder_block(center, encoder4, 512)
-
-    decoder3 = decoder_block(decoder4, encoder3, 256)
-
-    decoder2 = decoder_block(decoder3, encoder2, 128)
-
-    decoder1 = decoder_block(decoder2, encoder1, 64)
- 
-    decoder0 = decoder_block(decoder1, encoder0, 32)
-
-    outputs = layers.Conv2D(1, (1, 1), activation='sigmoid')(decoder0)
-
-    enhanced_image = layers.Conv2D(1, 1)(outputs)
+    input_image = layers.Input(shape=(IMAGE_SIZE), name='input_image')
+    input_nlabels = layers.Input(shape=(IMAGE_SIZE[0]-36, IMAGE_SIZE[1]-36,1), name='input_nlabels')
     
-    aff = layers.Lambda(sobel_edge, output_shape=sobel_output_shape)(enhanced_image)
+    input_edge = layers.Lambda(sobel_edge, output_shape=sobel_output_shape)(input_image)
+
+    encoder0_pool, encoder0 = encoder_block(input_edge, 64)
+
+    encoder1_pool, encoder1 = encoder_block(encoder0_pool, 128)
+
+    encoder2_pool, encoder2 = encoder_block(encoder1_pool, 256)
+
+    encoder3_pool, encoder3 = encoder_block(encoder2_pool, 512)
+ 
+    center = conv_block(encoder3_pool, 1024)
+
+    decoder3 = decoder_block(center, encoder3, 512)
+
+    decoder2 = decoder_block(decoder3, encoder2, 256)
+
+    decoder1 = decoder_block(decoder2, encoder1, 128)
+ 
+    decoder0 = decoder_block(decoder1, encoder0, 64)
+
+    decoder0 = layers.Cropping2D(18)(decoder0)
+
+    aff = layers.Conv2D(2, (1, 1))(decoder0)
+    
+    #aff = layers.Lambda(sobel_edge, output_shape=sobel_output_shape)(enhanced_image)
     
     if USE_CC_INFERENCE:
+        print("USE_CC_INFERENCE: YES")
         WY, SY, TY = layers.Lambda(rand_weight_inference, output_shape=randweight_output_shape_inference, arguments={'nlabels': input_nlabels})(aff)
         model = models.Model(inputs=[input_image, input_nlabels], outputs = [aff])
         model.compile(optimizer = SGD(lr=0.1), loss = ff_loss(WY, SY, TY))
     else:
+        print("USE_CC_INFERENCE: NO")
         WY, SY = layers.Lambda(rand_weight, output_shape=randweight_output_shape, arguments={'nlabels': input_nlabels})(aff)
         model = models.Model(inputs=[input_image, input_nlabels], outputs = [aff])
         model.compile(optimizer = SGD(lr=0.1), loss = ff_loss(WY, SY))
