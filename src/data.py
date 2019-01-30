@@ -105,8 +105,8 @@ def DataPatches(p = 'train', ID = None):
         groundTruth = loadmat(VAL_GT_DIR+ID+GT_EXT)
     image = scale(image)
     gtseg = groundTruth['groundTruth'][0,segId]['Segmentation'][0,0].astype(np.float32)
-    image_patches = sklearn.feature_extraction.image.extract_patches_2d(image, (INPUT_SIZE[0], INPUT_SIZE[1]), max_patches=100, random_state=3)
-    gtseg_pathces = sklearn.feature_extraction.image.extract_patches_2d(gtseg, (INPUT_SIZE[0], INPUT_SIZE[1]), max_patches=100, random_state=3)
+    image_patches = sklearn.feature_extraction.image.extract_patches_2d(image, (INPUT_SIZE[0], INPUT_SIZE[1]), max_patches=50, random_state=7)
+    gtseg_pathces = sklearn.feature_extraction.image.extract_patches_2d(gtseg, (INPUT_SIZE[0], INPUT_SIZE[1]), max_patches=50, random_state=7)
     image_patches = np.expand_dims(image_patches, axis=-1)
 
     n, y, x = gtseg_pathces.shape

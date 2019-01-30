@@ -236,8 +236,8 @@ def FindMinEnergyAndRandCounts(WG, gtLabels, evalw=None):
     totalNegRand = 0.0    
     
 
-    totalPos = sum([d[2] for d in evalWeights if d[2] > 0])
-    totalNeg = sum([d[2] for d in evalWeights if d[2] < 0])
+    totalPos = sum([d[2] for d in evalWeights if d[2] > 0.0])
+    totalNeg = sum([d[2] for d in evalWeights if d[2] < 0.0])
     accTotal = [0]*len(evalWeights)
 
     accTotal[0] = totalPos + totalNeg
@@ -308,7 +308,7 @@ def FindMinEnergyAndRandCounts(WG, gtLabels, evalw=None):
             ei = ei + 1
         
     #print("Lowest Energy: " + str(lowE) + " at threshold " + str(lowThreshold)) 
-    return(lowT, lowE, posCountsRand, negCountsRand, mstEdges, totalPosRand, totalNegRand)
+    return(lowT, lowE, posCountsRand, negCountsRand, mstEdges, mstEdgeWeights, totalPosRand, totalNegRand)
 
 def FindBestRandThreshold(posCounts, negCounts, mstEdges, mstEdgeWeights):
     
