@@ -14,8 +14,8 @@ from keras import losses
 from keras import models
 from keras import backend as K
 from scipy import signal
-IMAGE_SIZE = (128, 128, 1)
-INPUT_SIZE = (128-36, 128-36, 1)
+IMAGE_SIZE = (100, 100, 3)
+INPUT_SIZE = (100, 100, 3)
 
 
 
@@ -89,7 +89,7 @@ def rand_weight_inference(y_pred, nlabels):
             nlabels_dict[u] = n[0, u[0], u[1], 0]
             nlabels_dict[v] = n[0, v[0], v[1], 0]
 
-        [bestT, lowE, posCounts, negCounts, mstEdges, totalPos, totalNeg] = ev.FindMinEnergyAndRandCounts(G, nlabels_dict)
+        [bestT, lowE, posCounts, negCounts, mstEdges, mstEdgeWeights, totalPos, totalNeg] = ev.FindMinEnergyAndRandCounts(G, nlabels_dict)
         
         # for class imbalance
         posWeight = 0.0
@@ -136,10 +136,11 @@ def rand_weight_inference(y_pred, nlabels):
 
 def sobel_edge(image):
     out = tf.image.sobel_edges(image)
-    return tf.squeeze(out, [-2])
+    shape = tf.shape(out)
+    return tf.reshape(out, [shape[0], shape[1], shape[2], -1])
 
 def sobel_output_shape(input_shape):
-    return (input_shape[0], input_shape[1], input_shape[2], 2)
+    return (input_shape[0], input_shape[1], input_shape[2], 6)
 
 def randweight_output_shape(input_shape):
 	return [input_shape, input_shape]
@@ -194,35 +195,35 @@ def decoder_block(input_tensor, concat_tensor, num_filters):
     decoder = layers.Activation('relu')(decoder)
     return decoder
 
-
+#input_edge = layers.Lambda(sobel_edge, output_shape=sobel_output_shape)(input_image)
 def unet(USE_CC_INFERENCE=None, pretrained_weights=None):
     input_image = layers.Input(shape=(IMAGE_SIZE), name='input_image')
-    input_nlabels = layers.Input(shape=(IMAGE_SIZE[0]-36, IMAGE_SIZE[1]-36,1), name='input_nlabels')
-    
-    input_edge = layers.Lambda(sobel_edge, output_shape=sobel_output_shape)(input_image)
+    input_nlabels = layers.Input(shape=(IMAGE_SIZE[0], IMAGE_SIZE[1],1), name='input_nlabels')
 
-    encoder0_pool, encoder0 = encoder_block(input_edge, 64)
+    input_edges = layers.Lambda(sobel_edge, output_shape=sobel_output_shape)(input_image)
+
+    encoder0_pool, encoder0 = encoder_block(input_edges, 64)
 
     encoder1_pool, encoder1 = encoder_block(encoder0_pool, 128)
 
-    encoder2_pool, encoder2 = encoder_block(encoder1_pool, 256)
+    #encoder2_pool, encoder2 = encoder_block(encoder1_pool, 256)
 
-    encoder3_pool, encoder3 = encoder_block(encoder2_pool, 512)
+    #encoder3_pool, encoder3 = encoder_block(encoder2_pool, 512)
  
-    center = conv_block(encoder3_pool, 1024)
+    center = conv_block(encoder1_pool, 256)
 
-    decoder3 = decoder_block(center, encoder3, 512)
+    #decoder3 = decoder_block(center, encoder3, 512)
 
-    decoder2 = decoder_block(decoder3, encoder2, 256)
+    #decoder2 = decoder_block(decoder3, encoder2, 256)
 
-    decoder1 = decoder_block(decoder2, encoder1, 128)
+    decoder1 = decoder_block(center, encoder1, 128)
  
     decoder0 = decoder_block(decoder1, encoder0, 64)
 
-    decoder0 = layers.Cropping2D(18)(decoder0)
+    #decoder0 = layers.Cropping2D(18)(decoder0)
 
     aff = layers.Conv2D(2, (1, 1))(decoder0)
-    
+    aff = layers.Activation('tanh')(aff)
     #aff = layers.Lambda(sobel_edge, output_shape=sobel_output_shape)(enhanced_image)
     
     if USE_CC_INFERENCE:
