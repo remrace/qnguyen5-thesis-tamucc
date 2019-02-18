@@ -397,3 +397,17 @@ def FindRandErrorAtThreshold(WG, gtLabels, T):
         randError = (localPos + localNeg) / (totalPos + totalNeg)
 		        
     return(randError)
+
+def mstEdges(WG):
+    
+    mySets = nx.utils.UnionFind()       
+    edgeWeights = [(u,v,w) for (u,v,w) in WG.edges(data = 'weight')]    
+    sortedEdges = sorted(edgeWeights, reverse=True, key=lambda edge: edge[2]) 
+    mstEdges = list()    
+    for u, v, w in sortedEdges:
+        su = mySets[u]
+        sv = mySets[v]
+        if su != sv:
+            mstEdges.append((u,v))            
+            mySets.union(u, v)
+    return(mstEdges)

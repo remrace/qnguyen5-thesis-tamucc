@@ -6,7 +6,7 @@ import skimage.transform as trans
 import numpy as np
 import networkx as nx
 import SegEval as ev
-
+from random import randint
 import tensorflow.contrib as tfcontrib
 from keras.optimizers import *
 from keras import layers
@@ -70,7 +70,8 @@ def rand_weight(y_pred, nlabels):
         
         # Std normalization
         totalW = np.sum(WY)
-        WY = np.divide(WY, totalW)
+        if totalW != 0.0:
+            WY = np.divide(WY, totalW)
 
         return WY, SY
     WY, SY = tf.py_func(GetRandWeights, [nlabels, y_pred], [tf.float32, tf.float32])
@@ -128,11 +129,52 @@ def rand_weight_inference(y_pred, nlabels):
         
         # Std normalization
         totalW = np.sum(WY)
-        WY = np.divide(WY, totalW)
+        if totalW != 0.0:
+            WY = np.divide(WY, totalW)
 
         return WY, SY, TY
     WY, SY, TY = tf.py_func(GetRandWeights, [nlabels, y_pred], [tf.float32, tf.float32, tf.float32])
     return [WY, SY, TY]
+
+def maximin_weight(y_pred):
+    def m_weight(y_p):
+        G = nx.grid_2d_graph(INPUT_SIZE[0], INPUT_SIZE[1])
+        for u, v, d in G.edges(data = True):
+            if u[0] == v[0]:
+                channel = 0
+            else:
+                channel = 1
+            d['weight'] =  y_p[0, u[0], u[1], channel]
+
+        WY = np.zeros((1, INPUT_SIZE[0], INPUT_SIZE[1], 2), np.float32)
+        mstEdges = ev.mstEdges(G)
+
+        MST = nx.Graph()
+        MST.add_edges_from(mstEdges)
+        u = (randint(0, IMAGE_SIZE[0]-1), randint(0, IMAGE_SIZE[1]-1))
+        v = (randint(0, IMAGE_SIZE[0]-1), randint(0, IMAGE_SIZE[1]-1))
+        while u == v:
+            u = (randint(0, IMAGE_SIZE[0]-1), randint(0, IMAGE_SIZE[1]-1))
+            v = (randint(0, IMAGE_SIZE[0]-1), randint(0, IMAGE_SIZE[1]-1))
+        path = nx.shortest_path(MST, source=u, target=v)
+        (u,v) = min([edge for edge in nx.utils.pairwise(path)], key=lambda e: G.edges[e]['weight'])
+        if u[0] == v[0]:
+            channel = 0
+        else:
+            channel = 1
+        WY[0, u[0], u[1], channel] = 1.0
+        return WY
+    WY = tf.py_func(m_weight, [y_pred], [tf.float32])
+    return [WY]
+
+def maximin_loss_wrapper(WY):
+    def maximin_loss(y_true, y_pred):
+        edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(y_true, y_pred)))
+        #m=0.3
+        #edgeLoss = tf.multiply(y_true, tf.maximum(0.0, tf.subtract(1.0 - m, y_pred))) + tf.multiply(tf.subtract(1.0, y_true), tf.maximum(0.0, tf.subtract(y_pred, m)))
+        edgeLoss = tf.multiply(edgeLoss, WY)
+        return tf.reduce_sum(edgeLoss)
+    return maximin_loss
 
 def sobel_edge(image):
     out = tf.image.sobel_edges(image)
@@ -148,6 +190,51 @@ def randweight_output_shape(input_shape):
 def randweight_output_shape_inference(input_shape):
 	return [input_shape, input_shape, input_shape]
 
+def maximin_weight_output_shape(input_shape):
+	return [input_shape]
+
+def rand_error_wrapper(nlabels, mode=0):
+    def rand_error_0(y_true, y_pred):
+        def rand(n, yp):
+            G = nx.grid_2d_graph(INPUT_SIZE[0], INPUT_SIZE[1])
+            nlabels_dict = dict()
+            for u, v, d in G.edges(data = True):
+                if u[0] == v[0]:
+                    channel = 0
+                else:
+                    channel = 1
+                d['weight'] =  yp[0, u[0], u[1], channel]
+                nlabels_dict[u] = n[0, u[0], u[1], 0]
+                nlabels_dict[v] = n[0, v[0], v[1], 0]
+            RE = ev.FindRandErrorAtThreshold(G, nlabels_dict, 0.0)
+            return RE
+        RE = tf.py_func(rand, [nlabels, y_pred], tf.double)
+        return RE
+    
+    def rand_error_lowT(y_true, y_pred):
+        def rand(n, yp):
+            G = nx.grid_2d_graph(INPUT_SIZE[0], INPUT_SIZE[1])
+            nlabels_dict = dict()
+            for u, v, d in G.edges(data = True):
+                if u[0] == v[0]:
+                    channel = 0
+                else:
+                    channel = 1
+                d['weight'] =  yp[0, u[0], u[1], channel]
+                nlabels_dict[u] = n[0, u[0], u[1], 0]
+                nlabels_dict[v] = n[0, v[0], v[1], 0]
+            lowT, lowE = ev.FindMinEnergyThreshold(G)
+            RE = ev.FindRandErrorAtThreshold(G, nlabels_dict, lowT)
+            return RE
+        RE = tf.py_func(rand, [nlabels, y_pred], tf.double)
+        return RE
+    
+    if mode==0:
+        return rand_error_0
+    else:
+        return rand_error_lowT
+
+
 def ff_loss(WY, SY, TY = None):
     SY = tf.reshape(SY, [-1])
     WY = tf.reshape(WY, [-1])
@@ -161,6 +248,7 @@ def ff_loss(WY, SY, TY = None):
             edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(tf.subtract(y_pred, TY), SY)))
         else:
             edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(y_pred, SY)))
+            #edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(y_pred, tf.maximum(0.0, tf.multiply(SY, y_true)))))
 
         weightedLoss = tf.multiply(WY, edgeLoss)
 
@@ -196,9 +284,9 @@ def decoder_block(input_tensor, concat_tensor, num_filters):
     return decoder
 
 #input_edge = layers.Lambda(sobel_edge, output_shape=sobel_output_shape)(input_image)
-def unet(USE_CC_INFERENCE=None, pretrained_weights=None):
-    input_image = layers.Input(shape=(IMAGE_SIZE), name='input_image')
-    input_nlabels = layers.Input(shape=(IMAGE_SIZE[0], IMAGE_SIZE[1],1), name='input_nlabels')
+def unet(mode='USE_CC_INFERENCE', pretrained_weights=None):
+    input_image = layers.Input(shape=(IMAGE_SIZE), name='input_image', dtype='float32')
+    input_nlabels = layers.Input(shape=(IMAGE_SIZE[0], IMAGE_SIZE[1],1), name='input_nlabels', dtype='float32')
 
     input_edges = layers.Lambda(sobel_edge, output_shape=sobel_output_shape)(input_image)
 
@@ -226,22 +314,32 @@ def unet(USE_CC_INFERENCE=None, pretrained_weights=None):
     aff = layers.Activation('tanh')(aff)
     #aff = layers.Lambda(sobel_edge, output_shape=sobel_output_shape)(enhanced_image)
     
-    if USE_CC_INFERENCE:
+    
+
+    if mode == 'USE_CC_INFERENCE':
         print("USE_CC_INFERENCE: YES")
         WY, SY, TY = layers.Lambda(rand_weight_inference, output_shape=randweight_output_shape_inference, arguments={'nlabels': input_nlabels})(aff)
         model = models.Model(inputs=[input_image, input_nlabels], outputs = [aff])
-        model.compile(optimizer = SGD(lr=0.1), loss = ff_loss(WY, SY, TY))
-    else:
+        model.compile(optimizer = Adam(), loss = ff_loss(WY, SY, TY))
+    elif mode == 'NO_CC_INFERENCE':
         print("USE_CC_INFERENCE: NO")
         WY, SY = layers.Lambda(rand_weight, output_shape=randweight_output_shape, arguments={'nlabels': input_nlabels})(aff)
         model = models.Model(inputs=[input_image, input_nlabels], outputs = [aff])
-        model.compile(optimizer = SGD(lr=0.1), loss = ff_loss(WY, SY))
+        model.compile(optimizer = Adam(), loss = ff_loss(WY, SY), metrics=[rand_error_wrapper(input_nlabels, mode=0),
+                                                                            rand_error_wrapper(input_nlabels, mode=1)])
+    elif mode == 'MAXIMIN_LEARNING':
+        print("MAXIMIN_LEARNING")
+        WY = layers.Lambda(maximin_weight, output_shape=maximin_weight_output_shape)(aff)
+        model = models.Model(inputs=[input_image, input_nlabels], outputs = [aff])
+        model.compile(optimizer = Adam(), loss = maximin_loss_wrapper(WY), metrics=[rand_error_wrapper(input_nlabels, mode=0),
+                                                                                    rand_error_wrapper(input_nlabels, mode=1)])
 
-
-    model.summary()
+    #model.summary()
     
     if(pretrained_weights):
-    	model.load_weights(pretrained_weights)
+        print('Loading weights...')
+        model.load_weights(pretrained_weights)
+        print('Done!')
 
     return model
 

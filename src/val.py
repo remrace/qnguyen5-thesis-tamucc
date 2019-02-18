@@ -10,10 +10,11 @@ import SegGraph as seglib
 from keras.models import load_model
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler
 from scipy import stats
+import csv
 INPUT_SIZE = (100, 100, 3)
 NUM_EDGES = INPUT_SIZE[0]*(INPUT_SIZE[1]-1) + (INPUT_SIZE[0]-1)*INPUT_SIZE[1]
-def test(USE_CC_INFERENCE = False):
-    my_model = model.unet(USE_CC_INFERENCE=False, pretrained_weights='C:/model/02-09-no-inference.hdf5')
+def test(mode=None, pretrained_weights=None):
+    my_model = model.unet(mode, pretrained_weights)
    
     print('Getting data')
     f = open('../synimage/test.p', 'rb')
@@ -42,11 +43,14 @@ def test(USE_CC_INFERENCE = False):
             gtLabels[v] = nlabels[v[0], v[1], 0]
             d['weight'] = pred[idx, u[0], u[1], channel]
         
+        a = pred[idx, :,:,0]
+        b = pred[idx, :,:,1]
+
         lowT, lowE, posCountsRand, negCountsRand, mstEdges, mstEdgeWeights, totalPosRand, totalNegRand = ev.FindMinEnergyAndRandCounts(G, gtLabels)
         randE = ev.FindRandErrorAtThreshold(G, gtLabels, lowT)
-        lowT_R, lowE_R = ev.FindBestRandThreshold(posCountsRand, negCountsRand, mstEdges, mstEdgeWeights)
-        print(lowT, lowE, randE)
-        print(lowT_R, lowE_R)
+        print('------------------')
+        print(np.min(a), np.percentile(a,25), np.median(a), np.percentile(a,75), np.max(a), np.mean(a))
+        print(np.min(b), np.percentile(b,25), np.median(b), np.percentile(b,75), np.max(b), np.mean(b), lowT)
 
         L = seglib.GetLabelsAtThreshold(G, lowT)
 
@@ -69,19 +73,29 @@ def test(USE_CC_INFERENCE = False):
         plt.imshow(result_image)
         plt.title('lowT: ' + str(lowT) + 'lowE: ' + str(lowE))
 
-        result.append([lowT, lowT_R, randE, lowE_R])
+        result.append([lowT, lowE, randE])
 
-        if USE_CC_INFERENCE:
-            fname = 'test/with-inference-' + str(idx) + '.png'
-        else:
-            fname = 'test/no-inference-' + str(idx) + '.png'
+        fname = 'test/' + str(mode) + '-' + str(idx) + '.png'
         fig.savefig(fname)
-    f = open('result.p', 'wb')
-    pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
-    f.close()
+    return result
 
 if __name__ == '__main__':
     print('Init')
-    test(USE_CC_INFERENCE = False)
-    #test(num_of_samples = 50, USE_CC_INFERENCE = True, seed=3)
+    #with_inference_result = test(mode='USE_CC_INFERENCE', pretrained_weights='C:/model/with-inference/02-09-with-inference.800-0.03.hdf5')
+    #no_inference_result = test(mode='NO_CC_INFERENCE', pretrained_weights='C:/model/no-inference/02-09-no-inference.best.390-0.00.hdf5')
+    
+    '''
+    with open('test/02-09-with-inference.best.205-0.01.log', 'w', newline='') as csvfile:
+        fieldnames = ['lowT', 'lowE', 'randE']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for lowT, lowE, randE in with_inference_result:
+            writer.writerow({'lowT':lowT, 'lowE':lowE, 'randE':randE})
+    '''
+    with open('test/02-15-with-inference.log', 'w', newline='') as csvfile:
+        fieldnames = ['lowT', 'lowE', 'randE']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for lowT, lowE, randE in with_inference_result:
+            writer.writerow({'lowT':lowT, 'lowE':lowE, 'randE':randE})
     print('Exit')
