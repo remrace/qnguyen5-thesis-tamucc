@@ -14,8 +14,8 @@ from keras import losses
 from keras import models
 from keras import backend as K
 from scipy import signal
-IMAGE_SIZE = (100, 100, 3)
-INPUT_SIZE = (100, 100, 3)
+IMAGE_SIZE = (32, 32, 3)
+INPUT_SIZE = (32, 32, 3)
 
 
 
@@ -136,8 +136,8 @@ def rand_weight_inference(y_pred, nlabels):
     WY, SY, TY = tf.py_func(GetRandWeights, [nlabels, y_pred], [tf.float32, tf.float32, tf.float32])
     return [WY, SY, TY]
 
-def maximin_weight(y_pred):
-    def m_weight(y_p):
+def maximin_weight(y_pred, nlabels):
+    def m_weight(y_p, n):
         G = nx.grid_2d_graph(INPUT_SIZE[0], INPUT_SIZE[1])
         for u, v, d in G.edges(data = True):
             if u[0] == v[0]:
@@ -147,6 +147,7 @@ def maximin_weight(y_pred):
             d['weight'] =  y_p[0, u[0], u[1], channel]
 
         WY = np.zeros((1, INPUT_SIZE[0], INPUT_SIZE[1], 2), np.float32)
+        SY = np.zeros((1, INPUT_SIZE[0], INPUT_SIZE[1], 2), np.float32)
         mstEdges = ev.mstEdges(G)
 
         MST = nx.Graph()
@@ -163,16 +164,18 @@ def maximin_weight(y_pred):
         else:
             channel = 1
         WY[0, u[0], u[1], channel] = 1.0
-        return WY
-    WY = tf.py_func(m_weight, [y_pred], [tf.float32])
-    return [WY]
+        if n[0, u[0], u[1], 0] == n[0, v[0], v[1], 0]:
+            SY[0, u[0], u[1], channel] = 1.0
+        return WY, SY
+    WY, SY = tf.py_func(m_weight, [y_pred, nlabels], [tf.float32, tf.float32])
 
-def maximin_loss_wrapper(WY):
+    return [WY, SY]
+
+def maximin_loss_wrapper(WY, SY):
     def maximin_loss(y_true, y_pred):
-        edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(y_true, y_pred)))
-        #m=0.3
-        #edgeLoss = tf.multiply(y_true, tf.maximum(0.0, tf.subtract(1.0 - m, y_pred))) + tf.multiply(tf.subtract(1.0, y_true), tf.maximum(0.0, tf.subtract(y_pred, m)))
-        edgeLoss = tf.multiply(edgeLoss, WY)
+        maximin_edge = tf.reduce_sum(tf.multiply(WY, y_pred))
+        label_uv = tf.reduce_sum(SY)
+        edgeLoss = tf.maximum(0.0, tf.subtract(1.0, tf.multiply(maximin_edge, label_uv)))
         return tf.reduce_sum(edgeLoss)
     return maximin_loss
 
@@ -329,11 +332,11 @@ def unet(mode='USE_CC_INFERENCE', pretrained_weights=None):
                                                                             rand_error_wrapper(input_nlabels, mode=1)])
     elif mode == 'MAXIMIN_LEARNING':
         print("MAXIMIN_LEARNING")
-        WY = layers.Lambda(maximin_weight, output_shape=maximin_weight_output_shape)(aff)
+        WY, SY= layers.Lambda(maximin_weight, output_shape=randweight_output_shape, arguments={'nlabels': input_nlabels})(aff)
         model = models.Model(inputs=[input_image, input_nlabels], outputs = [aff])
-        model.compile(optimizer = Adam(), loss = maximin_loss_wrapper(WY), metrics=[rand_error_wrapper(input_nlabels, mode=0),
+        model.compile(optimizer = Adam(), loss = maximin_loss_wrapper(WY, SY), metrics=[rand_error_wrapper(input_nlabels, mode=0),
                                                                                     rand_error_wrapper(input_nlabels, mode=1)])
-
+        #model.compile(optimizer = Adam(), loss = maximin_loss_wrapper(WY, SY))
     #model.summary()
     
     if(pretrained_weights):
