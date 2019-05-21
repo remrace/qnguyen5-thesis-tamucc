@@ -7,6 +7,11 @@ from scipy.signal import convolve2d
 
 DELTA_TOLERANCE = 1.0e-12
 
+def GetLabelsAtThreshold(G,theta=0):
+    lg = G.copy()    
+    lg.remove_edges_from([(u,v) for (u,v,d) in  G.edges(data=True) if d['weight']<theta])
+    L = {node:color for color,comp in enumerate(nx.connected_components(lg)) for node in comp}    
+    return L
 
 def GetNodeEdgeLabels(seg):
     
@@ -252,8 +257,8 @@ def FindMinEnergyAndRandCounts(WG, gtLabels, evalw=None):
     upto = 0
 
     for u, v, w in sortedEdges:
-        if w <= 0.0:
-            break
+        #if w <= 0.0:
+         #   break
         
         su = mySets[u]
         sv = mySets[v]

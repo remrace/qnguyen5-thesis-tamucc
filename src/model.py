@@ -14,8 +14,8 @@ from keras import losses
 from keras import models
 from keras import backend as K
 from scipy import signal
-IMAGE_SIZE = (32, 32, 3)
-INPUT_SIZE = (32, 32, 3)
+IMAGE_SIZE = (64, 64, 3)
+INPUT_SIZE = (64, 64, 3)
 
 
 

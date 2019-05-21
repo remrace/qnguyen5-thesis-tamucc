@@ -1,3 +1,12 @@
+import numpy as np
+import random as rn
+np.random.seed(37)
+rn.seed(142857)
+import os
+os.environ["CUDA_VISIBLE_DEVICES"]=""
+os.environ["PYTHONHASHSEED"]="0"
+import tensorflow as tf
+tf.set_random_seed(1357)
 from data import *
 import model
 import keras
@@ -7,8 +16,8 @@ import time
 import csv
 
 ROOT = 'C:/model/'
-DATE = '02-18'
-SIZE = (32, 32)
+DATE = '02-19'
+SIZE = (64, 64)
 
 class TimeHistory(keras.callbacks.Callback):
     def on_train_begin(self, logs={}):
@@ -68,7 +77,7 @@ if __name__ == '__main__':
     #---------------------------------------------
     '''
     #---------------------------------------------
-    for i in range(5):
+    for i in range(2):
         train(mode='NO_CC_INFERENCE', BATCH_SIZE=1, EPOCHS=100,VALIDATION_SPLIT=0.5)
         train(mode='MAXIMIN_LEARNING', BATCH_SIZE=1, EPOCHS=100,VALIDATION_SPLIT=0.5)
     #---------------------------------------------
